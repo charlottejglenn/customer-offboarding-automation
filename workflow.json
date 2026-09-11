@@ -1,0 +1,477 @@
+{
+  "name": "Customer Offboarding Automation",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        48
+      ],
+      "id": "69a93c24-2116-4655-89e7-59e4c2d482c4",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "authentication": "appToken",
+        "resource": "company",
+        "operation": "get",
+        "companyId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        64,
+        48
+      ],
+      "id": "084eba23-76d1-4816-942b-846d9ec514b7",
+      "name": "Get a company"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/objects/2026-03/tickets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"hs_pipeline\": \"0\",\n    \"hs_pipeline_stage\": \"1\",\n    \"hs_ticket_priority\": \"HIGH\",\n    \"subject\": \"Offboarding - {{ $('Prepare Offboarding Context').first().json.companyName }}\",\n    \"content\": {{ JSON.stringify($('Prepare Offboarding Context').first().json.ticketDescription) }},\n    \"offboarding_idempotency_key\": \"{{ $('Prepare Offboarding Context').first().json.idempotencyKey }}\"\n  },\n  \"associations\": [\n    {\n      \"to\": {\n        \"id\": \"{{ $('Prepare Offboarding Context').first().json.companyId }}\"\n      },\n      \"types\": [\n        {\n          \"associationCategory\": \"HUBSPOT_DEFINED\",\n          \"associationTypeId\": 26\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1184,
+        48
+      ],
+      "id": "3eb38ff9-42d3-4d3b-a1c0-d67fa3333f1b",
+      "name": "Create Offboarding Ticket"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json;\n\nconst company = {\n  companyId: input.companyId,\n  companyName: input.properties?.name?.value,\n  customerTier: input.properties?.customer_tier?.value,\n  customerStatus: input.properties?.customer_status?.value,\n  dataExportRequired:\n    input.properties?.data_export_required?.value,\n  financeReviewRequired:\n    input.properties?.finance_review_required?.value,\n  offboardingDate:\n    input.properties?.offboarding_date?.value,\n  offboardingReason:\n    input.properties?.offboarding_reason?.value,\n};\n\nconst requiredCompanyFields = [\n  \"companyId\",\n  \"companyName\",\n  \"customerTier\",\n  \"customerStatus\",\n  \"dataExportRequired\",\n  \"financeReviewRequired\",\n];\n\nconst missingCompanyFields = requiredCompanyFields.filter((field) => {\n  const value = company[field];\n\n  return (\n    value === undefined ||\n    value === null ||\n    value === \"\"\n  );\n});\n\nif (missingCompanyFields.length > 0) {\n  throw new Error(\n    `Missing required fields: ${missingCompanyFields.join(\", \")}`\n  );\n}\n\nfunction normalizeBoolean(value, fieldName) {\n  if (typeof value === \"boolean\") {\n    return value;\n  }\n\n  if (typeof value === \"string\") {\n    const normalizedValue = value.trim().toLowerCase();\n\n    if (normalizedValue === \"true\") return true;\n    if (normalizedValue === \"false\") return false;\n  }\n\n  if (value === 1) return true;\n  if (value === 0) return false;\n\n  throw new Error(\n    `Invalid boolean value for ${fieldName}: ${value}`\n  );\n}\n\nfunction normalizeHubSpotDate(value, fieldName) {\n  const timestamp = Number(value);\n  const date = new Date(timestamp);\n\n  if (!Number.isFinite(timestamp) || Number.isNaN(date.getTime())) {\n    throw new Error(\n      `Invalid date value for ${fieldName}: ${value}`\n    );\n  }\n\n  return date.toISOString().slice(0, 10);\n}\n\nconst offboardingReasonLabels = {\n  migration_to_another_provider:\n    \"Migration to another provider\",\n  budget_constraints:\n    \"Budget constraints\",\n  product_or_service_limitations:\n    \"Product or service limitations\",\n  business_closure_or_strategic_change:\n    \"Business closure or strategic change\",\n  other:\n    \"Other\",\n};\n\nconst companyId = String(company.companyId).trim();\nconst companyName = String(company.companyName).trim();\n\nconst customerTier = String(company.customerTier)\n  .trim()\n  .toLowerCase();\n\nconst customerStatus = String(company.customerStatus)\n  .trim()\n  .toLowerCase();\n\nconst dataExportRequired = normalizeBoolean(\n  company.dataExportRequired,\n  \"dataExportRequired\"\n);\n\nconst financeReviewRequired = normalizeBoolean(\n  company.financeReviewRequired,\n  \"financeReviewRequired\"\n);\n\nconst offboardingEligible =\n  customerStatus === \"offboarding in progress\";\n\nlet offboardingDate = null;\nlet offboardingReason = null;\nlet offboardingReasonLabel = null;\n\nif (offboardingEligible) {\n  const requiredOffboardingFields = [\n    \"offboardingDate\",\n    \"offboardingReason\",\n  ];\n\n  const missingOffboardingFields =\n    requiredOffboardingFields.filter((field) => {\n      const value = company[field];\n\n      return (\n        value === undefined ||\n        value === null ||\n        value === \"\"\n      );\n    });\n\n  if (missingOffboardingFields.length > 0) {\n    throw new Error(\n      `Missing required offboarding fields: ${missingOffboardingFields.join(\", \")}`\n    );\n  }\n\n  offboardingDate = normalizeHubSpotDate(\n    company.offboardingDate,\n    \"offboardingDate\"\n  );\n\n  offboardingReason = String(company.offboardingReason)\n    .trim()\n    .toLowerCase();\n\n  offboardingReasonLabel =\n    offboardingReasonLabels[offboardingReason];\n\n  if (!offboardingReasonLabel) {\n    throw new Error(\n      `Invalid offboarding reason: ${company.offboardingReason}`\n    );\n  }\n}\n\nconst enterpriseCustomer =\n  customerTier === \"enterprise\";\n\nconst manualReviewRequired =\n  enterpriseCustomer ||\n  dataExportRequired ||\n  financeReviewRequired;\n\nconst requiredOffboardingSteps = [];\n\nif (offboardingEligible) {\n  requiredOffboardingSteps.push(\n    \"Billing review\",\n    \"Account access review\",\n    \"Open support issues review\"\n  );\n\n  if (enterpriseCustomer) {\n    requiredOffboardingSteps.push(\n      \"Enterprise review\"\n    );\n  }\n\n  if (dataExportRequired) {\n    requiredOffboardingSteps.push(\n      \"Data export\"\n    );\n  }\n\n  if (financeReviewRequired) {\n    requiredOffboardingSteps.push(\n      \"Finance review\"\n    );\n  }\n}\n\nconst ticketDescription = offboardingEligible\n  ? [\n      `Offboarding date: ${offboardingDate}`,\n      `Reason: ${offboardingReasonLabel}`,\n      \"\",\n      \"Required offboarding steps:\",\n      ...requiredOffboardingSteps.map(\n        (step) => `• ${step}`\n      ),\n    ].join(\"\\n\")\n  : null;\n\nreturn {\n  json: {\n    companyId,\n    companyName,\n    customerTier,\n    customerStatus,\n    offboardingDate,\n    offboardingReason,\n    offboardingReasonLabel,\n    offboardingEligible,\n    eligibilityReason: offboardingEligible\n      ? null\n      : \"Customer status is not Offboarding in Progress\",\n    idempotencyKey: `offboarding:${companyId}`,\n    requiredOffboardingSteps,\n    ticketDescription,\n    rules: {\n      enterpriseCustomer,\n      dataExportRequired,\n      financeReviewRequired,\n      manualReviewRequired,\n    },\n    metadata: {\n      schemaVersion: \"1.1\",\n      processedAt: new Date().toISOString(),\n    },\n  },\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        48
+      ],
+      "id": "7b477192-b060-45f4-aeb8-8f61ca8538dc",
+      "name": "Prepare Offboarding Context"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3d641a93-3e1c-4c37-a4eb-e8721e24b795",
+              "leftValue": "={{ $json.total}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        960,
+        -48
+      ],
+      "id": "9afdc8da-ceaf-43cf-bc15-25fdeae08b1b",
+      "name": "Offboarding Ticket Already Exists?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1e51cf2e-f43a-4c0e-a085-dbb8a2180443",
+              "leftValue": "={{ $json.offboardingEligible }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        48
+      ],
+      "id": "d26c704b-4f3d-47fe-ad7d-c9062b9d6ce6",
+      "name": "Customer Ready for Offboarding?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "957b7c79-6327-4716-b3d9-43a3e01b13f0",
+              "name": "result",
+              "value": "not_eligible",
+              "type": "string"
+            },
+            {
+              "id": "d3e9aad8-a4e1-40db-b8de-bbc25cddd1fe",
+              "name": "companyId",
+              "value": "={{ $json.companyId }}",
+              "type": "string"
+            },
+            {
+              "id": "c499844e-d09b-45c3-a072-0b2c79101c4c",
+              "name": "companyName",
+              "value": "={{ $json.companyName }}",
+              "type": "string"
+            },
+            {
+              "id": "e52ae506-ca1d-4e80-88e9-c6fc2a18e94d",
+              "name": "customerStatus",
+              "value": "={{ $json.customerStatus }}",
+              "type": "string"
+            },
+            {
+              "id": "7eb11904-98f3-4b67-938b-535a081502e1",
+              "name": "reason",
+              "value": "={{ $json.eligibilityReason }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        736,
+        144
+      ],
+      "id": "e7a66c44-b159-4a01-af76-4a4d7a900491",
+      "name": "Return Not Eligible"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8cd94c00-e9d1-459b-9c76-b893f007fa3a",
+              "name": "result",
+              "value": "existing_case",
+              "type": "string"
+            },
+            {
+              "id": "b14c2717-3963-4474-ba2f-072077506b12",
+              "name": "ticketId",
+              "value": "={{ $json.results[0].id }}",
+              "type": "string"
+            },
+            {
+              "id": "de909f7f-cc2b-44e7-bbdc-59605072571b",
+              "name": "ticketUrl",
+              "value": "={{ $json.results[0].url}}",
+              "type": "string"
+            },
+            {
+              "id": "ae04efa7-f248-4dfd-8866-8975e2be84ee",
+              "name": "companyId",
+              "value": "={{ $('Prepare Offboarding Context').first().json.companyId }}",
+              "type": "string"
+            },
+            {
+              "id": "a5a04126-280e-4bc0-aafa-1a8f9688a45c",
+              "name": "companyName",
+              "value": "={{ $('Prepare Offboarding Context').first().json.companyName }}",
+              "type": "string"
+            },
+            {
+              "id": "7e942eaa-3915-4af9-9aed-d10d9029c031",
+              "name": "idempotencyKey",
+              "value": "={{ $('Prepare Offboarding Context').first().json.idempotencyKey }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1184,
+        -144
+      ],
+      "id": "d6662453-c5da-4dea-a3d3-3c3dc5daecd5",
+      "name": "Return Existing Offboarding Case"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2e8fd0f5-b676-418a-91f5-8c649a0c631a",
+              "name": "caseId",
+              "value": "={{ 'OFF-' + $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "ba2302b5-ad1f-448e-9bbf-1dfe823f2078",
+              "name": "ticketId",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "a5d17338-542d-4347-b61c-300a1dff8a38",
+              "name": "ticketUrl",
+              "value": "={{ $json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "ccd47469-7c7a-4b9f-a001-de8fcd4b6997",
+              "name": "companyId",
+              "value": "={{ $('Prepare Offboarding Context').first().json.companyId }}",
+              "type": "string"
+            },
+            {
+              "id": "a7a828c7-1805-4267-997a-206d06b64dab",
+              "name": "companyName",
+              "value": "={{ $('Prepare Offboarding Context').first().json.companyName }}",
+              "type": "string"
+            },
+            {
+              "id": "cd99c555-fafd-4ac9-9abe-5cfdf4aeff60",
+              "name": "customerTier",
+              "value": "={{ $('Prepare Offboarding Context').first().json.customerTier }}",
+              "type": "string"
+            },
+            {
+              "id": "f6ee56c6-99e7-437a-91fa-02a934a1f206",
+              "name": "customerStatus",
+              "value": "={{ $('Prepare Offboarding Context').first().json.customerStatus }}",
+              "type": "string"
+            },
+            {
+              "id": "6690ee57-7498-487e-bc20-c55658147916",
+              "name": "idempotencyKey",
+              "value": "={{ $('Prepare Offboarding Context').first().json.idempotencyKey }}",
+              "type": "string"
+            },
+            {
+              "id": "9506aa17-0980-4a85-a144-4b31dc6d7c92",
+              "name": "enterpriseCustomer",
+              "value": "={{ $('Prepare Offboarding Context').first().json.rules.enterpriseCustomer }}",
+              "type": "boolean"
+            },
+            {
+              "id": "d0cd4530-7a06-4f1b-ab42-f84a83143c2b",
+              "name": "dataExportRequired",
+              "value": "={{ $('Prepare Offboarding Context').first().json.rules.dataExportRequired }}",
+              "type": "boolean"
+            },
+            {
+              "id": "3aa8c0ab-1969-4672-a6ac-0b07bd3ea54b",
+              "name": "financeReviewRequired",
+              "value": "={{ $('Prepare Offboarding Context').first().json.rules.financeReviewRequired }}",
+              "type": "boolean"
+            },
+            {
+              "id": "c3d96d76-b50b-4484-9491-ebab5d155631",
+              "name": "manualReviewRequired",
+              "value": "={{ $('Prepare Offboarding Context').first().json.rules.manualReviewRequired }}",
+              "type": "boolean"
+            },
+            {
+              "id": "b9a07364-20b9-4460-900b-699dee47b04e",
+              "name": "offboardingStatus",
+              "value": "initiated",
+              "type": "string"
+            },
+            {
+              "id": "e07a89e2-e192-43df-974e-ab28a9801354",
+              "name": "result",
+              "value": "created_case",
+              "type": "string"
+            },
+            {
+              "id": "153c609b-a062-4d8b-93e4-433a1477648b",
+              "name": "offboardingDate",
+              "value": "={{ $('Prepare Offboarding Context').first().json.offboardingDate}}",
+              "type": "string"
+            },
+            {
+              "id": "a405036a-9180-45c5-a5a7-46fbdb257936",
+              "name": "offboardingReason",
+              "value": "={{ $('Prepare Offboarding Context').first().json.offboardingReasonLabel }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1408,
+        48
+      ],
+      "id": "e5a92e88-1b1d-4f9c-9bc7-eb86d9b41ce1",
+      "name": "Return Created Offboarding Case"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/tickets/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filterGroups\": [\n    {\n      \"filters\": [\n        {\n          \"propertyName\": \"offboarding_idempotency_key\",\n          \"operator\": \"EQ\",\n          \"value\": \"{{ $json.idempotencyKey }}\"\n        }\n      ]\n    }\n  ],\n  \"properties\": [\n    \"subject\",\n    \"offboarding_idempotency_key\"\n  ],\n  \"limit\": 1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        736,
+        -48
+      ],
+      "id": "2b5646f5-7533-461f-aaa2-51a912ac7294",
+      "name": "Search Existing Offboarding Ticket"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get a company",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a company": {
+      "main": [
+        [
+          {
+            "node": "Prepare Offboarding Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Offboarding Ticket": {
+      "main": [
+        [
+          {
+            "node": "Return Created Offboarding Case",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Offboarding Context": {
+      "main": [
+        [
+          {
+            "node": "Customer Ready for Offboarding?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offboarding Ticket Already Exists?": {
+      "main": [
+        [
+          {
+            "node": "Return Existing Offboarding Case",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Offboarding Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Customer Ready for Offboarding?": {
+      "main": [
+        [
+          {
+            "node": "Search Existing Offboarding Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Not Eligible",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Created Offboarding Case": {
+      "main": [
+        []
+      ]
+    },
+    "Search Existing Offboarding Ticket": {
+      "main": [
+        [
+          {
+            "node": "Offboarding Ticket Already Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "nodeGroups": [],
+  "tags": []
+}
